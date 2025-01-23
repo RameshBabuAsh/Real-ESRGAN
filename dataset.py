@@ -34,6 +34,10 @@ class LOLDataset(Dataset):
         lr_image = Image.open(lr_image_path).convert('RGB')
         hr_image = Image.open(hr_image_path).convert('RGB')
 
+        # Resize HR image to (2*w, 2*h)
+        hr_width, hr_height = hr_image.size
+        hr_image = hr_image.resize((2 * hr_width, 2 * hr_height))
+
         # Apply transformations if specified
         if self.transform:
             lr_image = self.transform(lr_image)
