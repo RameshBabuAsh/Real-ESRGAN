@@ -5,7 +5,7 @@ from torch.optim import Adam
 from PIL import Image
 import numpy as np
 from huggingface_hub import hf_hub_url, cached_download
-
+from tqdm import tqdm
 from .rrdbnet_arch import RRDBNet
 from .utils import pad_reflect, split_image_into_overlapping_patches, stich_together, unpad_image
 
@@ -105,13 +105,12 @@ class RealESRGAN:
         self.model.train()
         for epoch in range(num_epochs):
             epoch_loss = 0.0
-            for lr_images, hr_images in dataloader:
+            for lr_images, hr_images in tqdm(dataloader):
                 lr_images = lr_images.to(self.device)
                 hr_images = hr_images.to(self.device)
 
                 # Forward pass
                 sr_images = self.model(lr_images)
-                print(sr_images.shape, hr_images.shape)
 
                 # Calculate loss
                 loss = loss_fn(sr_images, hr_images)
