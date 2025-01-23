@@ -46,13 +46,13 @@ class RealESRGAN:
             cached_download(config_file_url, cache_dir=cache_dir, force_filename=local_filename)
             print('Weights downloaded to:', os.path.join(cache_dir, local_filename))
 
-        loadnet = torch.load(model_path)
+        loadnet = torch.load(model_path, weights_only=True, map_location=self.device)
         if 'params' in loadnet:
-            self.model.load_state_dict(loadnet['params'], strict=True)
+            self.model.load_state_dict(loadnet['params'], strict=False)
         elif 'params_ema' in loadnet:
-            self.model.load_state_dict(loadnet['params_ema'], strict=True)
+            self.model.load_state_dict(loadnet['params_ema'], strict=False)
         else:
-            self.model.load_state_dict(loadnet, strict=True)
+            self.model.load_state_dict(loadnet, strict=False)
         self.model.to(self.device)
 
     def predict(self, lr_image, batch_size=4, patches_size=192,
@@ -132,6 +132,6 @@ class RealESRGAN:
 
     def load_for_training(self, model_path):
         """Load pre-trained weights for training."""
-        loadnet = torch.load(model_path, weights_only=True)
+        loadnet = torch.load(model_path, weights_only=True, map_location=self.device)
         self.model.load_state_dict(loadnet, strict=False)
         self.model.train()
