@@ -14,7 +14,7 @@ transform = transforms.Compose([
 ])
 
 # Dataset paths
-dataset_dir = '/kaggle/input/LOL'
+dataset_dir = '/kaggle/input/lol-dataset/lol_dataset'
 
 # Training dataset and loader
 train_dataset = LOLDataset(dataset_dir=dataset_dir, mode='train', transform=transform)
