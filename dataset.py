@@ -1,6 +1,7 @@
 from torch.utils.data import Dataset
-from PIL import Image
+from PIL import Image, ImageEnhance
 import os
+import numpy as np
 
 class LOLDataset(Dataset):
     def __init__(self, dataset_dir, mode='train', transform=None):
@@ -25,7 +26,7 @@ class LOLDataset(Dataset):
 
     def __len__(self):
         return len(self.lr_images)
-
+    
     def __getitem__(self, idx):
         # Load low-resolution (LR) and high-resolution (HR) images
         lr_image_path = os.path.join(self.lr_dir, self.lr_images[idx])
@@ -38,7 +39,22 @@ class LOLDataset(Dataset):
         hr_width, hr_height = hr_image.size
         hr_image = hr_image.resize((2 * hr_width, 2 * hr_height))
 
-        # Apply transformations if specified
+        # Apply transformations to the LR image
+        # Adjust brightness
+        brightness_enhancer = ImageEnhance.Brightness(lr_image)
+        lr_image = brightness_enhancer.enhance(4)  # Increase brightness
+
+        # Adjust contrast
+        contrast_enhancer = ImageEnhance.Contrast(lr_image)
+        lr_image = contrast_enhancer.enhance(0.8)  # Decrease contrast
+
+        # Adjust exposure by scaling pixel intensity
+        lr_image_array = np.array(lr_image)
+        exposure_factor = 1.5  # Increase exposure by 50%
+        lr_image_array = np.clip(lr_image_array * exposure_factor, 0, 255).astype(np.uint8)
+        lr_image = Image.fromarray(lr_image_array)
+
+        # Apply additional transformations if specified
         if self.transform:
             lr_image = self.transform(lr_image)
             hr_image = self.transform(hr_image)
