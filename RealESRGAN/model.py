@@ -133,6 +133,6 @@ class RealESRGAN:
 
     def load_for_training(self, model_path):
         """Load pre-trained weights for training."""
-        loadnet = torch.load(model_path)
+        loadnet = torch.load(model_path, weights_only=True)
         self.model.load_state_dict(loadnet, strict=False)
         self.model.train()
