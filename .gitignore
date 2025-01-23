@@ -1,6 +1,6 @@
 build/
 dist/
 *.egg-info/
-
+venv
 __pycache__/
 .ipynb_checkpoints/
