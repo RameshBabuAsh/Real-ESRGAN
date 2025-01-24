@@ -105,27 +105,15 @@ class RealESRGAN:
 
                 for idx, (lr_image, hr_image) in enumerate(zip(lr_images_batch, hr_images_batch)):
                     # Convert images to NumPy arrays
-                    lr_image = np.array(lr_image)
-                    hr_image = np.array(hr_image)
-        
-                    img = torch.FloatTensor(lr_image/255).permute((2,0,1)).unsqueeze(0).to(device).detach()
-
-                    res = self.model(img)
-
-                    res = res.squeeze(0)
-
-                    sr_image = res.permute((1,2,0)).clamp_(0, 1).cpu()
-
-                    np_sr_image = sr_image.detach().numpy()
-
-                    sr_img = (np_sr_image*255).astype(np.uint8)
-
-                    # Convert LR, HR, and SR images to tensors for loss calculation
-                    sr_tensor = torch.FloatTensor(sr_img / 255).permute(2, 0, 1).unsqueeze(0).to(device)
+                    lr_tensor = torch.FloatTensor(lr_image / 255).permute(2, 0, 1).unsqueeze(0).to(device)
                     hr_tensor = torch.FloatTensor(hr_image / 255).permute(2, 0, 1).unsqueeze(0).to(device)
+
+                    # Forward pass
+                    sr_tensor = self.model(lr_tensor)
 
                     # Calculate loss
                     loss = loss_fn(sr_tensor, hr_tensor)
+                    print(hr_tensor, lr_tensor, sr_tensor, loss)
                     batch_loss += loss.item()
 
                     # Backward pass and optimization
