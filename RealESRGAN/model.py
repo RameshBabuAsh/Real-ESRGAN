@@ -112,6 +112,7 @@ class RealESRGAN:
 
                     # Determine appropriate win_size for SSIM if not provided
                     print(sr_image.shape)
+                    print(hr_image.shape)
                     effective_win_size = win_size or min(sr_image.shape[0], sr_image.shape[1], 7)
 
                     # Calculate PSNR and SSIM
