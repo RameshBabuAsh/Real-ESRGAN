@@ -75,24 +75,28 @@ class RealESRGAN:
             avg_loss = epoch_loss / len(dataloader)
             print(f"Epoch [{epoch + 1}/{num_epochs}], Loss: {avg_loss:.4f}")
 
-    def validate(self, dataloader, win_size=None):
+    def validate(self, dataloader, save_dir="validation_results", win_size=None):
         """
-        Validate the RealESRGAN model by calculating PSNR and SSIM on a dataset.
+        Validate the RealESRGAN model by calculating PSNR and SSIM on a dataset and saving the images.
 
         Args:
             dataloader (DataLoader): PyTorch DataLoader providing low-resolution and high-resolution image pairs.
+            save_dir (str): Directory to save the super-resolved and ground-truth images.
             win_size (int, optional): Window size for SSIM calculation. Default is None, which uses skimage's default.
 
         Returns:
             dict: Dictionary containing average PSNR and SSIM for the validation dataset.
         """
+        # Ensure the save directory exists
+        os.makedirs(save_dir, exist_ok=True)
+
         self.model.eval()  # Set the model to evaluation mode
         total_psnr = 0.0
         total_ssim = 0.0
         num_images = 0
 
         with torch.no_grad():
-            for lr_images, hr_images in tqdm(dataloader):
+            for idx, (lr_images, hr_images) in enumerate(tqdm(dataloader)):
                 # Move images to the device
                 lr_images = lr_images.to(self.device)
                 hr_images = hr_images.to(self.device)
@@ -100,35 +104,40 @@ class RealESRGAN:
                 # Perform super-resolution
                 sr_images = self.model(lr_images)
 
-                # Calculate metrics for each image in the batch
-                for sr_image, hr_image in zip(sr_images, hr_images):
+                # Calculate metrics and save images for each image in the batch
+                for batch_idx, (sr_image, hr_image) in enumerate(zip(sr_images, hr_images)):
                     # Convert SR and HR images to NumPy arrays
                     sr_image = sr_image.permute(1, 2, 0).clamp(0, 1).cpu().numpy()
                     hr_image = hr_image.permute(1, 2, 0).clamp(0, 1).cpu().numpy()
 
                     # Rescale images to [0, 255] for metric calculations
-                    sr_image = (sr_image * 255).astype(np.uint8)
-                    hr_image = (hr_image * 255).astype(np.uint8)
+                    sr_image_uint8 = (sr_image * 255).astype(np.uint8)
+                    hr_image_uint8 = (hr_image * 255).astype(np.uint8)
 
                     # Determine appropriate win_size for SSIM if not provided
-                    print(sr_image.shape)
-                    print(hr_image.shape)
                     effective_win_size = win_size or min(sr_image.shape[0], sr_image.shape[1], 7)
 
                     # Calculate PSNR and SSIM
-                    psnr = calculate_psnr(hr_image, sr_image, data_range=255)
-                    # ssim = calculate_ssim(hr_image, sr_image, win_size=effective_win_size, multichannel=True, data_range=255)
+                    psnr = calculate_psnr(hr_image_uint8, sr_image_uint8, data_range=255)
+                    # ssim = calculate_ssim(hr_image_uint8, sr_image_uint8, win_size=effective_win_size, channel_axis=-1, data_range=255)
 
                     total_psnr += psnr
                     # total_ssim += ssim
                     num_images += 1
 
+                    # Save images
+                    sr_image_pil = Image.fromarray(sr_image_uint8)
+                    hr_image_pil = Image.fromarray(hr_image_uint8)
+                    sr_image_pil.save(os.path.join(save_dir, f"sr_image_{idx}_{batch_idx}.png"))
+                    hr_image_pil.save(os.path.join(save_dir, f"hr_image_{idx}_{batch_idx}.png"))
+
         # Calculate average metrics
         avg_psnr = total_psnr / num_images
-        avg_ssim = total_ssim / num_images
+        # avg_ssim = total_ssim / num_images
 
-        print(f"Validation Results - PSNR: {avg_psnr:.6f}, SSIM: {avg_ssim:.8f}")
-        return {"PSNR": avg_psnr, "SSIM": avg_ssim}
+        print(f"Validation Results - PSNR: {avg_psnr:.6f}")
+        return {"PSNR": avg_psnr}
+
 
     def predict(self, dataloader):
         """
