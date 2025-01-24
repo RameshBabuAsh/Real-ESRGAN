@@ -75,12 +75,13 @@ class RealESRGAN:
             avg_loss = epoch_loss / len(dataloader)
             print(f"Epoch [{epoch + 1}/{num_epochs}], Loss: {avg_loss:.4f}")
 
-    def validate(self, dataloader):
+    def validate(self, dataloader, win_size=None):
         """
         Validate the RealESRGAN model by calculating PSNR and SSIM on a dataset.
 
         Args:
             dataloader (DataLoader): PyTorch DataLoader providing low-resolution and high-resolution image pairs.
+            win_size (int, optional): Window size for SSIM calculation. Default is None, which uses skimage's default.
 
         Returns:
             dict: Dictionary containing average PSNR and SSIM for the validation dataset.
@@ -109,9 +110,12 @@ class RealESRGAN:
                     sr_image = (sr_image * 255).astype(np.uint8)
                     hr_image = (hr_image * 255).astype(np.uint8)
 
+                    # Determine appropriate win_size for SSIM if not provided
+                    effective_win_size = win_size or min(sr_image.shape[0], sr_image.shape[1], 7)
+
                     # Calculate PSNR and SSIM
                     psnr = calculate_psnr(hr_image, sr_image, data_range=255)
-                    ssim = calculate_ssim(hr_image, sr_image, multichannel=True, data_range=255)
+                    ssim = calculate_ssim(hr_image, sr_image, win_size=effective_win_size, multichannel=True, data_range=255)
 
                     total_psnr += psnr
                     total_ssim += ssim
