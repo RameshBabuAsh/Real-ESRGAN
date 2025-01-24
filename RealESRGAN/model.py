@@ -111,14 +111,15 @@ class RealESRGAN:
                     hr_image = (hr_image * 255).astype(np.uint8)
 
                     # Determine appropriate win_size for SSIM if not provided
+                    print(sr_image.shape)
                     effective_win_size = win_size or min(sr_image.shape[0], sr_image.shape[1], 7)
 
                     # Calculate PSNR and SSIM
                     psnr = calculate_psnr(hr_image, sr_image, data_range=255)
-                    ssim = calculate_ssim(hr_image, sr_image, win_size=effective_win_size, multichannel=True, data_range=255)
+                    # ssim = calculate_ssim(hr_image, sr_image, win_size=effective_win_size, multichannel=True, data_range=255)
 
                     total_psnr += psnr
-                    total_ssim += ssim
+                    # total_ssim += ssim
                     num_images += 1
 
         # Calculate average metrics
