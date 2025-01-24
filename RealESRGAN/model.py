@@ -110,6 +110,12 @@ class RealESRGAN:
                     lr_image = np.array(lr_image)
                     hr_image = np.array(hr_image)
 
+                    # Ensure images are in channels-last format for padding
+                    if lr_image.shape[0] == 3:  # Check if channels-first
+                        lr_image = np.transpose(lr_image, (1, 2, 0))  # Convert to (H, W, C)
+                    if hr_image.shape[0] == 3:  # Check if channels-first
+                        hr_image = np.transpose(hr_image, (1, 2, 0))  # Convert to (H, W, C)
+
                     # Apply reflective padding to the LR image
                     lr_image_padded = pad_reflect(lr_image, pad_size)
 
@@ -194,6 +200,12 @@ class RealESRGAN:
                     lr_image = np.array(lr_image)
                     hr_image = np.array(hr_image)
 
+                    # Ensure images are in channels-last format for padding
+                    if lr_image.shape[0] == 3:  # Check if channels-first
+                        lr_image = np.transpose(lr_image, (1, 2, 0))  # Convert to (H, W, C)
+                    if hr_image.shape[0] == 3:  # Check if channels-first
+                        hr_image = np.transpose(hr_image, (1, 2, 0))  # Convert to (H, W, C)
+
                     # Apply reflective padding to the LR image
                     lr_image_padded = pad_reflect(lr_image, pad_size)
 
@@ -273,6 +285,10 @@ class RealESRGAN:
                 for lr_image in lr_images_batch:
                     # Convert the image to NumPy array
                     lr_image = np.array(lr_image)
+
+                    # Ensure images are in channels-last format for padding
+                    if lr_image.shape[0] == 3:  # Check if channels-first
+                        lr_image = np.transpose(lr_image, (1, 2, 0))  # Convert to (H, W, C)
 
                     # Apply reflective padding
                     lr_image = pad_reflect(lr_image, pad_size)
