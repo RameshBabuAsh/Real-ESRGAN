@@ -49,14 +49,11 @@ class LOLDataset(Dataset):
         lr_image = contrast_enhancer.enhance(0.8)  # Decrease contrast
 
         # Adjust exposure by scaling pixel intensity
-        lr_image_array = np.array(lr_image)
+        lr_image = np.array(lr_image)
         exposure_factor = 1.5  # Increase exposure by 50%
-        lr_image_array = np.clip(lr_image_array * exposure_factor, 0, 255).astype(np.uint8)
-        lr_image = Image.fromarray(lr_image_array)
+        lr_image = np.clip(lr_image * exposure_factor, 0, 255).astype(np.uint8)
 
-        # Apply additional transformations if specified
-        if self.transform:
-            lr_image = self.transform(lr_image)
-            hr_image = self.transform(hr_image)
+        # Convert images to NumPy arrays
+        hr_image = np.array(hr_image)
 
         return lr_image, hr_image
