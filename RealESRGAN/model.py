@@ -8,6 +8,21 @@ from huggingface_hub import hf_hub_url, cached_download
 from tqdm import tqdm
 from .rrdbnet_arch import RRDBNet
 from .utils import pad_reflect, split_image_into_overlapping_patches, stich_together, unpad_image
+from skimage.metrics import structural_similarity as calculate_ssim
+
+def calculate_psnr(img1, img2):
+    # Ensure the images have the same dimensions
+    assert img1.shape == img2.shape, "Input images must have the same dimensions"
+    
+    # Calculate Mean Squared Error (MSE)
+    mse = np.mean((img1 - img2) ** 2)
+    if mse == 0:
+        return float('inf')  # Perfect match
+    
+    # Define the maximum pixel value (255 for 8-bit images)
+    max_pixel_value = 255.0
+    psnr = 10 * np.log10((max_pixel_value ** 2) / mse)
+    return psnr
 
 
 HF_MODELS = {
@@ -35,57 +50,6 @@ class RealESRGAN:
             num_block=23, num_grow_ch=32, scale=scale
         )
         self.model.to(self.device)
-
-    def load_weights(self, model_path, download=True):
-        if not os.path.exists(model_path) and download:
-            assert self.scale in [2, 4, 8], 'You can download models only with scales: 2, 4, 8'
-            config = HF_MODELS[self.scale]
-            cache_dir = os.path.dirname(model_path)
-            local_filename = os.path.basename(model_path)
-            config_file_url = hf_hub_url(repo_id=config['repo_id'], filename=config['filename'])
-            cached_download(config_file_url, cache_dir=cache_dir, force_filename=local_filename)
-            print('Weights downloaded to:', os.path.join(cache_dir, local_filename))
-
-        loadnet = torch.load(model_path, weights_only=True, map_location=self.device)
-        if 'params' in loadnet:
-            self.model.load_state_dict(loadnet['params'], strict=False)
-        elif 'params_ema' in loadnet:
-            self.model.load_state_dict(loadnet['params_ema'], strict=False)
-        else:
-            self.model.load_state_dict(loadnet, strict=False)
-        self.model.to(self.device)
-
-    def predict(self, lr_image, batch_size=4, patches_size=192,
-                padding=24, pad_size=15):
-        scale = self.scale
-        device = self.device
-        lr_image = np.array(lr_image)
-        lr_image = pad_reflect(lr_image, pad_size)
-
-        patches, p_shape = split_image_into_overlapping_patches(
-            lr_image, patch_size=patches_size, padding_size=padding
-        )
-        img = torch.FloatTensor(patches / 255).permute((0, 3, 1, 2)).to(device).detach()
-
-        with torch.no_grad():
-            res = self.model(img[0:batch_size])
-            for i in range(batch_size, img.shape[0], batch_size):
-                res = torch.cat((res, self.model(img[i:i + batch_size])), 0)
-
-        sr_image = res.permute((0, 2, 3, 1)).clamp_(0, 1).cpu()
-        np_sr_image = sr_image.numpy()
-
-        padded_size_scaled = tuple(np.multiply(p_shape[0:2], scale)) + (3,)
-        scaled_image_shape = tuple(np.multiply(lr_image.shape[0:2], scale)) + (3,)
-        np_sr_image = stich_together(
-            np_sr_image, padded_image_shape=padded_size_scaled,
-            target_shape=scaled_image_shape, padding_size=padding * scale
-        )
-        sr_img = (np_sr_image * 255).astype(np.uint8)
-        sr_img = unpad_image(sr_img, pad_size * scale)
-        sr_img = Image.fromarray(sr_img)
-
-        return sr_img
 
     def train(self, dataloader, num_epochs, learning_rate=1e-4, loss_fn=None):
         """
@@ -125,6 +89,87 @@ class RealESRGAN:
             avg_loss = epoch_loss / len(dataloader)
             print(f"Epoch [{epoch + 1}/{num_epochs}], Loss: {avg_loss:.4f}")
 
+    def validate(self, dataloader):
+        """
+        Validate the RealESRGAN model by calculating PSNR and SSIM on a dataset.
+
+        Args:
+            dataloader (DataLoader): PyTorch DataLoader providing low-resolution and high-resolution image pairs.
+
+        Returns:
+            dict: Dictionary containing average PSNR and SSIM for the validation dataset.
+        """
+        self.model.eval()  # Set the model to evaluation mode
+        total_psnr = 0.0
+        total_ssim = 0.0
+        num_images = 0
+
+        with torch.no_grad():
+            for lr_images, hr_images in tqdm(dataloader):
+                # Move images to the device
+                lr_images = lr_images.to(self.device)
+                hr_images = hr_images.to(self.device)
+
+                # Perform super-resolution
+                sr_images = self.model(lr_images)
+
+                # Calculate metrics for each image in the batch
+                for sr_image, hr_image in zip(sr_images, hr_images):
+                    # Convert SR and HR images to NumPy arrays
+                    sr_image = sr_image.permute(1, 2, 0).clamp(0, 1).cpu().numpy()
+                    hr_image = hr_image.permute(1, 2, 0).clamp(0, 1).cpu().numpy()
+
+                    # Rescale images to [0, 255] for metric calculations
+                    sr_image = (sr_image * 255).astype(np.uint8)
+                    hr_image = (hr_image * 255).astype(np.uint8)
+
+                    # Calculate PSNR and SSIM
+                    psnr = calculate_psnr(hr_image, sr_image, data_range=255)
+                    ssim = calculate_ssim(hr_image, sr_image, multichannel=True, data_range=255)
+
+                    total_psnr += psnr
+                    total_ssim += ssim
+                    num_images += 1
+
+        # Calculate average metrics
+        avg_psnr = total_psnr / num_images
+        avg_ssim = total_ssim / num_images
+
+        print(f"Validation Results - PSNR: {avg_psnr:.6f}, SSIM: {avg_ssim:.8f}")
+        return {"PSNR": avg_psnr, "SSIM": avg_ssim}
+
+    def predict(self, dataloader):
+        """
+        Perform super-resolution on a dataset using a DataLoader.
+
+        Args:
+            dataloader (DataLoader): PyTorch DataLoader providing low-resolution images.
+
+        Returns:
+            List[PIL.Image]: List of high-resolution images corresponding to the input images.
+        """
+        self.model.eval()  # Set the model to evaluation mode
+        high_res_images = []
+
+        with torch.no_grad():
+            for lr_images in tqdm(dataloader):
+                # Move low-resolution images to the device
+                lr_images = lr_images.to(self.device)
+
+                # Perform super-resolution
+                sr_images = self.model(lr_images)
+
+                # Process each super-resolved image
+                for sr_image in sr_images:
+                    # Convert the tensor back to a NumPy array and scale to [0, 255]
+                    sr_image = sr_image.permute(1, 2, 0).clamp(0, 1).cpu().numpy()
+                    sr_image = (sr_image * 255).astype(np.uint8)
+
+                    # Convert to PIL Image and store
+                    high_res_images.append(Image.fromarray(sr_image))
+
+        return high_res_images
+
     def save_model(self, save_path):
         """Save the trained model."""
         torch.save(self.model.state_dict(), save_path)
@@ -135,3 +180,9 @@ class RealESRGAN:
         loadnet = torch.load(model_path, weights_only=True, map_location=self.device)
         self.model.load_state_dict(loadnet, strict=False)
         self.model.train()
+
+    def load_for_eval(self, model_path):
+        """Load pre-trained weights for evaluation."""
+        loadnet = torch.load(model_path, weights_only=True, map_location=self.device)
+        self.model.load_state_dict(loadnet, strict=False)
+        self.model.eval()
