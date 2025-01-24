@@ -116,7 +116,7 @@ class RealESRGAN:
 
                     sr_image = res.permute((1,2,0)).clamp_(0, 1).cpu()
 
-                    np_sr_image = sr_image.numpy()
+                    np_sr_image = sr_image.detach().numpy()
 
                     sr_img = (np_sr_image*255).astype(np.uint8)
 
