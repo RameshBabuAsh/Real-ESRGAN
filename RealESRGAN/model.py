@@ -1,5 +1,4 @@
 import os
-import time
 import torch
 from torch.nn import functional as F
 from torch.optim import Adam
@@ -7,11 +6,9 @@ from PIL import Image
 import numpy as np
 from huggingface_hub import hf_hub_url, cached_download
 from tqdm import tqdm
-from .rrdbnet_arch import RRDBNet
-from .utils import pad_reflect, split_image_into_overlapping_patches, stich_together, unpad_image
 from skimage.metrics import peak_signal_noise_ratio as calculate_psnr
 from skimage.metrics import structural_similarity as calculate_ssim
-
+from .rrdbnet_arch import RRDBNet
 
 HF_MODELS = {
     2: dict(
@@ -107,45 +104,22 @@ class RealESRGAN:
                 batch_loss = 0.0
 
                 for idx, (lr_image, hr_image) in enumerate(zip(lr_images_batch, hr_images_batch)):
-
+                    # Convert images to NumPy arrays
                     lr_image = np.array(lr_image)
                     hr_image = np.array(hr_image)
+        
+                    img = torch.FloatTensor(lr_image/255).permute((2,0,1)).unsqueeze(0).to(device).detach()
 
-                    # Ensure images are in channels-last format for padding
-                    if lr_image.shape[0] == 3:  # Check if channels-first
-                        lr_image = np.transpose(lr_image, (1, 2, 0))  # Convert to (H, W, C)
-                    if hr_image.shape[0] == 3:  # Check if channels-first
-                        hr_image = np.transpose(hr_image, (1, 2, 0))  # Convert to (H, W, C)
+                    with torch.no_grad():
+                        res = self.model(img)
 
-                    # Apply reflective padding to the LR image
-                    lr_image_padded = pad_reflect(lr_image, pad_size)
+                    res = res.squeeze(0)
 
-                    # Split LR image into overlapping patches
-                    patches, p_shape = split_image_into_overlapping_patches(
-                        lr_image_padded, patch_size=patches_size, padding_size=padding
-                    )
-                    img = torch.FloatTensor(patches / 255).permute((0, 3, 1, 2)).to(device).detach()
+                    sr_image = res.permute((1,2,0)).clamp_(0, 1).cpu()
 
-                    # Perform super-resolution on patches in batches
-                    res = self.model(img[0:batch_size])
-                    for i in range(batch_size, img.shape[0], batch_size):
-                        res = torch.cat((res, self.model(img[i:i + batch_size])), 0)
-
-                    # Convert the result back to image format
-                    sr_image = res.permute((0, 2, 3, 1)).clamp_(0, 1).cpu()
                     np_sr_image = sr_image.numpy()
 
-                    # Stitch patches back together
-                    padded_size_scaled = tuple(np.multiply(p_shape[0:2], scale)) + (3,)
-                    scaled_image_shape = tuple(np.multiply(lr_image_padded.shape[0:2], scale)) + (3,)
-                    np_sr_image = stich_together(
-                        np_sr_image, padded_image_shape=padded_size_scaled,
-                        target_shape=scaled_image_shape, padding_size=padding * scale
-                    )
-                    sr_img = (np_sr_image * 255).astype(np.uint8)
-
-                    # Remove reflective padding
-                    sr_img = unpad_image(sr_img, pad_size * scale)
+                    sr_img = (np_sr_image*255).astype(np.uint8)
 
                     # Convert LR, HR, and SR images to tensors for loss calculation
                     sr_tensor = torch.FloatTensor(sr_img / 255).permute(2, 0, 1).unsqueeze(0).to(device)
@@ -197,49 +171,22 @@ class RealESRGAN:
         with torch.no_grad():
             for batch_idx, (lr_images_batch, hr_images_batch) in enumerate(tqdm(dataloader)):
                 for idx, (lr_image, hr_image) in enumerate(zip(lr_images_batch, hr_images_batch)):
-
+                    # Convert images to NumPy arrays
                     lr_image = np.array(lr_image)
                     hr_image = np.array(hr_image)
+        
+                    img = torch.FloatTensor(lr_image/255).permute((2,0,1)).unsqueeze(0).to(device).detach()
 
-                    # Ensure images are in channels-last format for padding
-                    if lr_image.shape[0] == 3:  # Check if channels-first
-                        lr_image = np.transpose(lr_image, (1, 2, 0))  # Convert to (H, W, C)
-                    if hr_image.shape[0] == 3:  # Check if channels-first
-                        hr_image = np.transpose(hr_image, (1, 2, 0))  # Convert to (H, W, C)
+                    with torch.no_grad():
+                        res = self.model(img)
 
-                    # Apply reflective padding to the LR image
-                    time.sleep(10)
-                    lr_image_padded = pad_reflect(lr_image, pad_size)
+                    res = res.squeeze(0)
 
-                    # Split LR image into overlapping patches
-                    patches, p_shape = split_image_into_overlapping_patches(
-                        lr_image_padded, patch_size=patches_size, padding_size=padding
-                    )
-                    img = torch.FloatTensor(patches / 255).permute((0, 3, 1, 2)).to(device).detach()
+                    sr_image = res.permute((1,2,0)).clamp_(0, 1).cpu()
 
-                    # Perform super-resolution on patches in batches
-                    res = self.model(img[0:batch_size])
-                    for i in range(batch_size, img.shape[0], batch_size):
-                        res = torch.cat((res, self.model(img[i:i + batch_size])), 0)
-
-                    # Convert the result back to image format
-                    sr_image = res.permute((0, 2, 3, 1)).clamp_(0, 1).cpu()
                     np_sr_image = sr_image.numpy()
 
-                    # Stitch patches back together
-                    padded_size_scaled = tuple(np.multiply(p_shape[0:2], scale)) + (3,)
-                    scaled_image_shape = tuple(np.multiply(lr_image_padded.shape[0:2], scale)) + (3,)
-                    np_sr_image = stich_together(
-                        np_sr_image, padded_image_shape=padded_size_scaled,
-                        target_shape=scaled_image_shape, padding_size=padding * scale
-                    )
-                    sr_img = (np_sr_image * 255).astype(np.uint8)
-
-                    # Remove reflective padding
-                    sr_img = unpad_image(sr_img, pad_size * scale)
-
-                    # Convert HR and SR images to [0, 255] and uint8
-                    sr_img = sr_img.astype(np.uint8)
+                    sr_img = (np_sr_image*255).astype(np.uint8)
                     hr_image = hr_image.astype(np.uint8)
 
                     # Calculate PSNR and SSIM
@@ -285,45 +232,22 @@ class RealESRGAN:
         with torch.no_grad():
             for lr_images_batch in tqdm(dataloader):
                 for lr_image in lr_images_batch:
-                    # Convert the image to NumPy array
                     lr_image = np.array(lr_image)
+        
+                    img = torch.FloatTensor(lr_image/255).permute((2,0,1)).unsqueeze(0).to(device).detach()
 
-                    # Ensure images are in channels-last format for padding
-                    if lr_image.shape[0] == 3:  # Check if channels-first
-                        lr_image = np.transpose(lr_image, (1, 2, 0))  # Convert to (H, W, C)
+                    with torch.no_grad():
+                        res = self.model(img)
 
-                    # Apply reflective padding
-                    lr_image = pad_reflect(lr_image, pad_size)
+                    res = res.squeeze(0)
 
-                    # Split image into overlapping patches
-                    patches, p_shape = split_image_into_overlapping_patches(
-                        lr_image, patch_size=patches_size, padding_size=padding
-                    )
-                    img = torch.FloatTensor(patches / 255).permute((0, 3, 1, 2)).to(device).detach()
+                    sr_image = res.permute((1,2,0)).clamp_(0, 1).cpu()
 
-                    # Perform super-resolution on patches in batches
-                    res = self.model(img[0:batch_size])
-                    for i in range(batch_size, img.shape[0], batch_size):
-                        res = torch.cat((res, self.model(img[i:i + batch_size])), 0)
-
-                    # Convert the result back to image format
-                    sr_image = res.permute((0, 2, 3, 1)).clamp_(0, 1).cpu()
                     np_sr_image = sr_image.numpy()
 
-                    # Stitch patches back together
-                    padded_size_scaled = tuple(np.multiply(p_shape[0:2], scale)) + (3,)
-                    scaled_image_shape = tuple(np.multiply(lr_image.shape[0:2], scale)) + (3,)
-                    np_sr_image = stich_together(
-                        np_sr_image, padded_image_shape=padded_size_scaled,
-                        target_shape=scaled_image_shape, padding_size=padding * scale
-                    )
-                    sr_img = (np_sr_image * 255).astype(np.uint8)
-
-                    # Remove reflective padding
-                    sr_img = unpad_image(sr_img, pad_size * scale)
-
-                    # Convert to PIL Image and append to the result list
-                    super_resolved_images.append(Image.fromarray(sr_img))
+                    sr_img = (np_sr_image*255).astype(np.uint8)
+                    sr_img = Image.fromarray(sr_img)
+                    super_resolved_images.append(sr_img)
 
         return super_resolved_images
 
@@ -349,30 +273,21 @@ class RealESRGAN:
                 padding=24, pad_size=15):
         scale = self.scale
         device = self.device
-        print(lr_image)
-        lr_image = pad_reflect(lr_image, pad_size)
-
-        patches, p_shape = split_image_into_overlapping_patches(
-            lr_image, patch_size=patches_size, padding_size=padding
-        )
-        img = torch.FloatTensor(patches/255).permute((0,3,1,2)).to(device).detach()
+        lr_image = np.array(lr_image)
+        
+        img = torch.FloatTensor(lr_image/255).permute((2,0,1)).unsqueeze(0).to(device).detach()
 
         with torch.no_grad():
-            res = self.model(img[0:batch_size])
-            for i in range(batch_size, img.shape[0], batch_size):
-                res = torch.cat((res, self.model(img[i:i+batch_size])), 0)
+            res = self.model(img)
 
-        sr_image = res.permute((0,2,3,1)).clamp_(0, 1).cpu()
+        res = res.squeeze(0)
+
+        sr_image = res.permute((1,2,0)).clamp_(0, 1).cpu()
+
         np_sr_image = sr_image.numpy()
 
-        padded_size_scaled = tuple(np.multiply(p_shape[0:2], scale)) + (3,)
-        scaled_image_shape = tuple(np.multiply(lr_image.shape[0:2], scale)) + (3,)
-        np_sr_image = stich_together(
-            np_sr_image, padded_image_shape=padded_size_scaled, 
-            target_shape=scaled_image_shape, padding_size=padding * scale
-        )
         sr_img = (np_sr_image*255).astype(np.uint8)
-        sr_img = unpad_image(sr_img, pad_size*scale)
+
         sr_img = Image.fromarray(sr_img)
 
         return sr_img
