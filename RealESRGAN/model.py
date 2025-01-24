@@ -11,6 +11,7 @@ from .utils import pad_reflect, split_image_into_overlapping_patches, stich_toge
 from skimage.metrics import peak_signal_noise_ratio as calculate_psnr
 from skimage.metrics import structural_similarity as calculate_ssim
 
+
 HF_MODELS = {
     2: dict(
         repo_id='sberbank-ai/Real-ESRGAN',
@@ -75,101 +76,239 @@ class RealESRGAN:
             avg_loss = epoch_loss / len(dataloader)
             print(f"Epoch [{epoch + 1}/{num_epochs}], Loss: {avg_loss:.4f}")
 
-    def validate(self, dataloader, save_dir="validation_results", win_size=None):
+    def train(self, dataloader, num_epochs, learning_rate=1e-4, loss_fn=None, batch_size=4, patches_size=192, padding=24, pad_size=15):
         """
-        Validate the RealESRGAN model by calculating PSNR and SSIM on a dataset and saving the images.
+        Train the RealESRGAN model using a patch-based approach.
 
         Args:
-            dataloader (DataLoader): PyTorch DataLoader providing low-resolution and high-resolution image pairs.
-            save_dir (str): Directory to save the super-resolved and ground-truth images.
-            win_size (int, optional): Window size for SSIM calculation. Default is None, which uses skimage's default.
+            dataloader (DataLoader): PyTorch DataLoader providing (LR, HR) image pairs.
+            num_epochs (int): Number of epochs to train the model.
+            loss_fn (callable): Loss function to calculate training loss.
+            optimizer (torch.optim.Optimizer): Optimizer for model training.
+            batch_size (int): Batch size for processing patches.
+            patches_size (int): Size of the patches to split the image into for processing.
+            padding (int): Padding size for overlapping patches.
+            pad_size (int): Padding size for reflective padding of the input images.
+            save_path (str): Directory to save intermediate training results (optional).
+        """
+        if loss_fn is None:
+            loss_fn = torch.nn.L1Loss()  # Default to L1 loss
+
+        optimizer = Adam(self.model.parameters(), lr=learning_rate)
+        scale = self.scale
+        device = self.device
+
+        self.model.train()  # Set the model to training mode
+
+        for epoch in range(num_epochs):
+            epoch_loss = 0.0
+            for batch_idx, (lr_images_batch, hr_images_batch) in enumerate(tqdm(dataloader)):
+                batch_loss = 0.0
+
+                for idx, (lr_image, hr_image) in enumerate(zip(lr_images_batch, hr_images_batch)):
+                    # Convert images to NumPy arrays
+                    lr_image = np.array(lr_image)
+                    hr_image = np.array(hr_image)
+
+                    # Apply reflective padding to the LR image
+                    lr_image_padded = pad_reflect(lr_image, pad_size)
+
+                    # Split LR image into overlapping patches
+                    patches, p_shape = split_image_into_overlapping_patches(
+                        lr_image_padded, patch_size=patches_size, padding_size=padding
+                    )
+                    img = torch.FloatTensor(patches / 255).permute((0, 3, 1, 2)).to(device).detach()
+
+                    # Perform super-resolution on patches in batches
+                    res = self.model(img[0:batch_size])
+                    for i in range(batch_size, img.shape[0], batch_size):
+                        res = torch.cat((res, self.model(img[i:i + batch_size])), 0)
+
+                    # Convert the result back to image format
+                    sr_image = res.permute((0, 2, 3, 1)).clamp_(0, 1).cpu()
+                    np_sr_image = sr_image.numpy()
+
+                    # Stitch patches back together
+                    padded_size_scaled = tuple(np.multiply(p_shape[0:2], scale)) + (3,)
+                    scaled_image_shape = tuple(np.multiply(lr_image_padded.shape[0:2], scale)) + (3,)
+                    np_sr_image = stich_together(
+                        np_sr_image, padded_image_shape=padded_size_scaled,
+                        target_shape=scaled_image_shape, padding_size=padding * scale
+                    )
+                    sr_img = (np_sr_image * 255).astype(np.uint8)
+
+                    # Remove reflective padding
+                    sr_img = unpad_image(sr_img, pad_size * scale)
+
+                    # Convert LR, HR, and SR images to tensors for loss calculation
+                    sr_tensor = torch.FloatTensor(sr_img / 255).permute(2, 0, 1).unsqueeze(0).to(device)
+                    hr_tensor = torch.FloatTensor(hr_image / 255).permute(2, 0, 1).unsqueeze(0).to(device)
+
+                    # Calculate loss
+                    loss = loss_fn(sr_tensor, hr_tensor)
+                    batch_loss += loss.item()
+
+                    # Backward pass and optimization
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+
+                # Average loss for the batch
+                epoch_loss += batch_loss / len(lr_images_batch)
+
+            # Log average epoch loss
+            avg_epoch_loss = epoch_loss / len(dataloader)
+            print(f"Epoch [{epoch + 1}/{num_epochs}], Loss: {avg_epoch_loss:.4f}")
+
+        print("Training Complete!")
+
+
+    def validate(self, dataloader, batch_size=4, patches_size=192, padding=24, pad_size=15, save_path="validation_results"):
+        """
+        Validate the RealESRGAN model by calculating PSNR and SSIM on a dataset.
+
+        Args:
+            dataloader (DataLoader): PyTorch DataLoader providing (LR, HR) image pairs.
+            batch_size (int): Batch size for processing patches.
+            patches_size (int): Size of the patches to split the image into for processing.
+            padding (int): Padding size for overlapping patches.
+            pad_size (int): Padding size for reflective padding of the input images.
+            save_path (str): Directory to save super-resolved images.
 
         Returns:
             dict: Dictionary containing average PSNR and SSIM for the validation dataset.
         """
-        # Ensure the save directory exists
-        os.makedirs(save_dir, exist_ok=True)
+        os.makedirs(save_path, exist_ok=True)
+        scale = self.scale
+        device = self.device
 
-        self.model.eval()  # Set the model to evaluation mode
         total_psnr = 0.0
-        total_ssim = 0.0
+        # total_ssim = 0.0
         num_images = 0
 
+        self.model.eval()
         with torch.no_grad():
-            for idx, (lr_images, hr_images) in enumerate(tqdm(dataloader)):
-                # Move images to the device
-                lr_images = lr_images.to(self.device)
-                hr_images = hr_images.to(self.device)
+            for batch_idx, (lr_images_batch, hr_images_batch) in enumerate(tqdm(dataloader)):
+                for idx, (lr_image, hr_image) in enumerate(zip(lr_images_batch, hr_images_batch)):
+                    # Convert images to NumPy arrays
+                    lr_image = np.array(lr_image)
+                    hr_image = np.array(hr_image)
 
-                # Perform super-resolution
-                sr_images = self.model(lr_images)
+                    # Apply reflective padding to the LR image
+                    lr_image_padded = pad_reflect(lr_image, pad_size)
 
-                # Calculate metrics and save images for each image in the batch
-                for batch_idx, (sr_image, hr_image) in enumerate(zip(sr_images, hr_images)):
-                    # Convert SR and HR images to NumPy arrays
-                    sr_image = sr_image.permute(1, 2, 0).clamp(0, 1).cpu().numpy()
-                    hr_image = hr_image.permute(1, 2, 0).clamp(0, 1).cpu().numpy()
+                    # Split LR image into overlapping patches
+                    patches, p_shape = split_image_into_overlapping_patches(
+                        lr_image_padded, patch_size=patches_size, padding_size=padding
+                    )
+                    img = torch.FloatTensor(patches / 255).permute((0, 3, 1, 2)).to(device).detach()
 
-                    # Rescale images to [0, 255] for metric calculations
-                    sr_image_uint8 = (sr_image * 255).astype(np.uint8)
-                    hr_image_uint8 = (hr_image * 255).astype(np.uint8)
+                    # Perform super-resolution on patches in batches
+                    res = self.model(img[0:batch_size])
+                    for i in range(batch_size, img.shape[0], batch_size):
+                        res = torch.cat((res, self.model(img[i:i + batch_size])), 0)
 
-                    # Determine appropriate win_size for SSIM if not provided
-                    effective_win_size = win_size or min(sr_image.shape[0], sr_image.shape[1], 7)
+                    # Convert the result back to image format
+                    sr_image = res.permute((0, 2, 3, 1)).clamp_(0, 1).cpu()
+                    np_sr_image = sr_image.numpy()
+
+                    # Stitch patches back together
+                    padded_size_scaled = tuple(np.multiply(p_shape[0:2], scale)) + (3,)
+                    scaled_image_shape = tuple(np.multiply(lr_image_padded.shape[0:2], scale)) + (3,)
+                    np_sr_image = stich_together(
+                        np_sr_image, padded_image_shape=padded_size_scaled,
+                        target_shape=scaled_image_shape, padding_size=padding * scale
+                    )
+                    sr_img = (np_sr_image * 255).astype(np.uint8)
+
+                    # Remove reflective padding
+                    sr_img = unpad_image(sr_img, pad_size * scale)
+
+                    # Convert HR and SR images to [0, 255] and uint8
+                    sr_img = sr_img.astype(np.uint8)
+                    hr_image = hr_image.astype(np.uint8)
 
                     # Calculate PSNR and SSIM
-                    psnr = calculate_psnr(hr_image_uint8, sr_image_uint8, data_range=255)
-                    # ssim = calculate_ssim(hr_image_uint8, sr_image_uint8, win_size=effective_win_size, channel_axis=-1, data_range=255)
+                    psnr = calculate_psnr(hr_image, sr_img, data_range=255)
+                    # ssim = calculate_ssim(hr_image, sr_img, multichannel=True, data_range=255)
 
                     total_psnr += psnr
                     # total_ssim += ssim
                     num_images += 1
 
-                    # Save images
-                    sr_image_pil = Image.fromarray(sr_image_uint8)
-                    hr_image_pil = Image.fromarray(hr_image_uint8)
-                    sr_image_pil.save(os.path.join(save_dir, f"sr_image_{idx}_{batch_idx}.png"))
-                    hr_image_pil.save(os.path.join(save_dir, f"hr_image_{idx}_{batch_idx}.png"))
+                    # Save the super-resolved image
+                    sr_pil_image = Image.fromarray(sr_img)
+                    sr_pil_image.save(os.path.join(save_path, f"sr_image_{batch_idx}_{idx}.png"))
 
         # Calculate average metrics
         avg_psnr = total_psnr / num_images
         # avg_ssim = total_ssim / num_images
 
-        print(f"Validation Results - PSNR: {avg_psnr:.6f}")
+        print(f"Validation Results - PSNR: {avg_psnr:.4f}")
         return {"PSNR": avg_psnr}
 
 
-    def predict(self, dataloader):
+
+    def predict_org_dataloader(self, dataloader, batch_size=4, patches_size=192, padding=24, pad_size=15):
         """
         Perform super-resolution on a dataset using a DataLoader.
 
         Args:
             dataloader (DataLoader): PyTorch DataLoader providing low-resolution images.
+            batch_size (int): Batch size for model inference.
+            patches_size (int): Size of the patches to split the image into for processing.
+            padding (int): Padding size for overlapping patches.
+            pad_size (int): Padding size for reflective padding of the input images.
 
         Returns:
             List[PIL.Image]: List of high-resolution images corresponding to the input images.
         """
-        self.model.eval()  # Set the model to evaluation mode
-        high_res_images = []
+        scale = self.scale
+        device = self.device
+        super_resolved_images = []
 
+        self.model.eval()
         with torch.no_grad():
-            for lr_images in tqdm(dataloader):
-                # Move low-resolution images to the device
-                lr_images = lr_images.to(self.device)
+            for lr_images_batch in tqdm(dataloader):
+                for lr_image in lr_images_batch:
+                    # Convert the image to NumPy array
+                    lr_image = np.array(lr_image)
 
-                # Perform super-resolution
-                sr_images = self.model(lr_images)
+                    # Apply reflective padding
+                    lr_image = pad_reflect(lr_image, pad_size)
 
-                # Process each super-resolved image
-                for sr_image in sr_images:
-                    # Convert the tensor back to a NumPy array and scale to [0, 255]
-                    sr_image = sr_image.permute(1, 2, 0).clamp(0, 1).cpu().numpy()
-                    sr_image = (sr_image * 255).astype(np.uint8)
+                    # Split image into overlapping patches
+                    patches, p_shape = split_image_into_overlapping_patches(
+                        lr_image, patch_size=patches_size, padding_size=padding
+                    )
+                    img = torch.FloatTensor(patches / 255).permute((0, 3, 1, 2)).to(device).detach()
 
-                    # Convert to PIL Image and store
-                    high_res_images.append(Image.fromarray(sr_image))
+                    # Perform super-resolution on patches in batches
+                    res = self.model(img[0:batch_size])
+                    for i in range(batch_size, img.shape[0], batch_size):
+                        res = torch.cat((res, self.model(img[i:i + batch_size])), 0)
 
-        return high_res_images
+                    # Convert the result back to image format
+                    sr_image = res.permute((0, 2, 3, 1)).clamp_(0, 1).cpu()
+                    np_sr_image = sr_image.numpy()
+
+                    # Stitch patches back together
+                    padded_size_scaled = tuple(np.multiply(p_shape[0:2], scale)) + (3,)
+                    scaled_image_shape = tuple(np.multiply(lr_image.shape[0:2], scale)) + (3,)
+                    np_sr_image = stich_together(
+                        np_sr_image, padded_image_shape=padded_size_scaled,
+                        target_shape=scaled_image_shape, padding_size=padding * scale
+                    )
+                    sr_img = (np_sr_image * 255).astype(np.uint8)
+
+                    # Remove reflective padding
+                    sr_img = unpad_image(sr_img, pad_size * scale)
+
+                    # Convert to PIL Image and append to the result list
+                    super_resolved_images.append(Image.fromarray(sr_img))
+
+        return super_resolved_images
+
 
     def save_model(self, save_path):
         """Save the trained model."""
@@ -187,3 +326,35 @@ class RealESRGAN:
         loadnet = torch.load(model_path, weights_only=True, map_location=self.device)
         self.model.load_state_dict(loadnet, strict=False)
         self.model.eval()
+
+    def predict_org(self, lr_image, batch_size=4, patches_size=192,
+                padding=24, pad_size=15):
+        scale = self.scale
+        device = self.device
+        lr_image = np.array(lr_image)
+        lr_image = pad_reflect(lr_image, pad_size)
+
+        patches, p_shape = split_image_into_overlapping_patches(
+            lr_image, patch_size=patches_size, padding_size=padding
+        )
+        img = torch.FloatTensor(patches/255).permute((0,3,1,2)).to(device).detach()
+
+        with torch.no_grad():
+            res = self.model(img[0:batch_size])
+            for i in range(batch_size, img.shape[0], batch_size):
+                res = torch.cat((res, self.model(img[i:i+batch_size])), 0)
+
+        sr_image = res.permute((0,2,3,1)).clamp_(0, 1).cpu()
+        np_sr_image = sr_image.numpy()
+
+        padded_size_scaled = tuple(np.multiply(p_shape[0:2], scale)) + (3,)
+        scaled_image_shape = tuple(np.multiply(lr_image.shape[0:2], scale)) + (3,)
+        np_sr_image = stich_together(
+            np_sr_image, padded_image_shape=padded_size_scaled, 
+            target_shape=scaled_image_shape, padding_size=padding * scale
+        )
+        sr_img = (np_sr_image*255).astype(np.uint8)
+        sr_img = unpad_image(sr_img, pad_size*scale)
+        sr_img = Image.fromarray(sr_img)
+
+        return sr_img
