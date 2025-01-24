@@ -110,8 +110,7 @@ class RealESRGAN:
         
                     img = torch.FloatTensor(lr_image/255).permute((2,0,1)).unsqueeze(0).to(device).detach()
 
-                    with torch.no_grad():
-                        res = self.model(img)
+                    res = self.model(img)
 
                     res = res.squeeze(0)
 
