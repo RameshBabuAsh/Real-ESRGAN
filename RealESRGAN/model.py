@@ -208,8 +208,6 @@ class RealESRGAN:
                         hr_image = np.transpose(hr_image, (1, 2, 0))  # Convert to (H, W, C)
 
                     # Apply reflective padding to the LR image
-                    print(lr_image.shape)
-                    print(lr_image)
                     time.sleep(10)
                     lr_image_padded = pad_reflect(lr_image, pad_size)
 
@@ -224,19 +222,9 @@ class RealESRGAN:
                     for i in range(batch_size, img.shape[0], batch_size):
                         res = torch.cat((res, self.model(img[i:i + batch_size])), 0)
 
-                    print("printing res")
-                    print(res)
-                    print(res.shape)
-
                     # Convert the result back to image format
                     sr_image = res.permute((0, 2, 3, 1)).clamp_(0, 1).cpu()
-                    print("printing sr_image")
-                    print(sr_image)
-                    print(sr_image.shape)
                     np_sr_image = sr_image.numpy()
-                    print("printing np_sr_image")
-                    print(np_sr_image)
-                    print(np_sr_image.shape)
 
                     # Stitch patches back together
                     padded_size_scaled = tuple(np.multiply(p_shape[0:2], scale)) + (3,)
@@ -250,25 +238,9 @@ class RealESRGAN:
                     # Remove reflective padding
                     sr_img = unpad_image(sr_img, pad_size * scale)
 
-                    print("printing sr_img")
-                    print(sr_img)
-                    print(sr_img.shape)
-
-                    print("printing hr_image")
-                    print(hr_image)
-                    print(hr_image.shape)
-
                     # Convert HR and SR images to [0, 255] and uint8
                     sr_img = sr_img.astype(np.uint8)
                     hr_image = hr_image.astype(np.uint8)
-                    
-                    print("printing sr_img")
-                    print(sr_img)
-                    print(sr_img.shape)
-
-                    print("printing hr_image")
-                    print(hr_image)
-                    print(hr_image.shape)
 
                     # Calculate PSNR and SSIM
                     psnr = calculate_psnr(hr_image, sr_img, data_range=255)
