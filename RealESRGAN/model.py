@@ -8,22 +8,8 @@ from huggingface_hub import hf_hub_url, cached_download
 from tqdm import tqdm
 from .rrdbnet_arch import RRDBNet
 from .utils import pad_reflect, split_image_into_overlapping_patches, stich_together, unpad_image
+from skimage.metrics import peak_signal_noise_ratio as calculate_psnr
 from skimage.metrics import structural_similarity as calculate_ssim
-
-def calculate_psnr(img1, img2):
-    # Ensure the images have the same dimensions
-    assert img1.shape == img2.shape, "Input images must have the same dimensions"
-    
-    # Calculate Mean Squared Error (MSE)
-    mse = np.mean((img1 - img2) ** 2)
-    if mse == 0:
-        return float('inf')  # Perfect match
-    
-    # Define the maximum pixel value (255 for 8-bit images)
-    max_pixel_value = 255.0
-    psnr = 10 * np.log10((max_pixel_value ** 2) / mse)
-    return psnr
-
 
 HF_MODELS = {
     2: dict(
