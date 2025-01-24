@@ -113,7 +113,6 @@ class RealESRGAN:
 
                     # Calculate loss
                     loss = loss_fn(sr_tensor, hr_tensor)
-                    print(hr_tensor, lr_tensor, sr_tensor, loss)
                     batch_loss += loss.item()
 
                     # Backward pass and optimization
