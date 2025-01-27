@@ -191,7 +191,6 @@ class RealESRGAN:
         avg_psnr = total_psnr / num_images
         # avg_ssim = total_ssim / num_images
 
-        print(f"Validation Results - PSNR: {avg_psnr:.4f}")
         return {"PSNR": avg_psnr}
 
 
