@@ -1,8 +1,10 @@
 import torch
 from torch import nn as nn
 from torch.nn import functional as F
-
-from .arch_utils import default_init_weights, make_layer, pixel_unshuffle
+try:
+    from .arch_utils import default_init_weights, make_layer, pixel_unshuffle
+except ImportError:
+    from arch_utils import default_init_weights, make_layer, pixel_unshuffle
 
 
 class ResidualDenseBlock(nn.Module):
